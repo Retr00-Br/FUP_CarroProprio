@@ -1,205 +1,88 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-from database import carregar_dados_expedicao, salvar_romaneios_db, atualizar_status_db
+from config import aplicar_estilo_higimed, buscar_imagem_corporativa
+from parser_erp import carregar_extrato_erp
+from database import sincronizar_erp_backend, carregar_dados, aplicar_upsert_dataframe
+from flow_rules import enriquecer_fluxo_frota, formatar_brl
+from ui_operacao import renderizar_aba_operacao
+from ui_graficos import renderizar_aba_graficos
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Master Expedição - Sprint 1",
+    page_title="FUPHigimed | Frota Própria & Técnica",
     page_icon="🚚",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
+aplicar_estilo_higimed()
 
-st.sidebar.title("🚚 Controle Logístico - Sprint 1")
-st.sidebar.markdown("---")
-modo_visao = st.sidebar.radio(
-    "Selecione o Painel:",
-    [
-        "📊 Dashboard Geral", 
-        "📤 Bipagem - Saída Expedição", 
-        "📥 Bipagem - Retorno Carga", 
-        "📈 Gráfico de Pendências de Retorno",
-        "⚙️ Importação de Romaneios"
-    ]
-)
+sincronizar_erp_backend()
 
-# Carregamento do DataFrame principal
-df_principal = carregar_dados_expedicao()
+logo_path = buscar_imagem_corporativa(["logomaster.webp"], ["logo"])
+caminhao_path = buscar_imagem_corporativa(["caminhãomaster.jpg", "caminhaomaster.jpg"], ["caminhao", "caminhão", "truck"])
 
-# ==============================================================================
-# MODO: DASHBOARD GERAL (Com Plotly e Filtro de Calendário/Mês)
-# ==============================================================================
-if modo_visao == "📊 Dashboard Geral":
-    st.title("📊 Painel Central de Controle de Entregas")
-    
-    if df_principal.empty:
-        st.info("ℹ️ Banco de dados vazio. Realize a importação da planilha de romaneios na aba de configurações.")
-    else:
-        # Filtro de Período / Mês
-        st.subheader("📅 Filtro de Competência / Carregamento")
-        if "data_emissao" in df_principal.columns:
-            df_principal["data_emissao"] = pd.to_datetime(df_principal["data_emissao"], errors="coerce")
-            anos_disponiveis = sorted(df_principal["data_emissao"].dt.year.dropna().unique())
-            
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                ano_sel = st.selectbox("Selecione o Ano:", options=anos_disponiveis if anos_disponiveis else [datetime.now().year])
-            
-            df_filtrado = df_principal[df_principal["data_emissao"].dt.year == ano_sel]
+with st.container():
+    st.markdown('<div class="banner-institucional">', unsafe_allow_html=True)
+    col_logo, col_titulo, col_caminhao = st.columns([1.3, 3.2, 1.5], vertical_alignment="center")
+
+    with col_logo:
+        if logo_path:
+            st.image(logo_path, use_container_width=True)
         else:
-            df_filtrado = df_principal
+            st.markdown("### MASTER HIGIMED")
 
-        st.markdown("---")
-        
-        # KPIs Principais
-        kpi1, kpi2, kpi3 = st.columns(3)
-        total_notas = len(df_filtrado)
-        faturamento = df_filtrado["valor_nota"].sum() if "valor_nota" in df_filtrado.columns else 0.0
-        total_romaneios = df_filtrado["romaneio"].nunique() if "romaneio" in df_filtrado.columns else 0
+    with col_titulo:
+        st.markdown(
+            """
+            <div style="padding-left: 10px;">
+                <p class="titulo-sistema">FUPHigimed — Controle de Frota Própria &amp; Técnica</p>
+                <p class="subtitulo-sistema">Distribuindo Saúde e Bem Estar · Saídas, Retorno de NF em Mão &amp; Baixa ERP</p>
+                <span class="badge-transportadoras">Carro Próprio · Carro Técnica</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        kpi1.metric("Volume de Notas Fiscais", f"{total_notas} NFs")
-        kpi2.metric("Faturamento Consolidado", f"R$ {faturamento:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        kpi3.metric("Romaneios Ativos", f"{total_romaneios}")
+    with col_caminhao:
+        if caminhao_path:
+            st.image(caminhao_path, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("---")
-        
-        # Gráficos Interativos com Plotly
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            st.subheader("🏆 Top Transportadoras por Romaneios")
-            if "transportadora" in df_filtrado.columns and not df_filtrado.empty:
-                df_transp = df_filtrado.groupby("transportadora")["romaneio"].nunique().reset_index()
-                fig_transp = px.bar(df_transp, x="transportadora", y="romaneio", title="Romaneios por Transportadora", template="plotly_white")
-                st.plotly_chart(fig_transp, use_container_width=True)
-            else:
-                st.info("Sem dados de transportadora disponíveis.")
+df_raw = carregar_dados()
 
-        with col_g2:
-            st.subheader("👤 Notas Carregadas por Funcionário")
-            if "funcionario_carregamento" in df_filtrado.columns and not df_filtrado.empty:
-                df_func = df_filtrado.groupby("funcionario_carregamento")["numero_nf"].count().reset_index()
-                fig_func = px.pie(df_func, names="funcionario_carregamento", values="numero_nf", title="Distribuição por Funcionário", hole=0.4, template="plotly_white")
-                st.plotly_chart(fig_func, use_container_width=True)
-            else:
-                st.info("Sem dados de funcionários disponíveis.")
+if not df_raw.empty:
+    df = enriquecer_fluxo_frota(df_raw)
+    aba_operacao, aba_graficos = st.tabs(["📋 Operação & Retorno de NFs", "📊 Indicadores da Frota"])
 
-# ==============================================================================
-# MODO: BIPAGEM - SAÍDA EXPEDIÇÃO (Simplificado com número do romaneio)
-# ==============================================================================
-elif modo_visao == "📤 Bipagem - Saída Expedição":
-    st.title("📤 Controle de Fluxo - Saída da Doca")
-    
-    if df_principal.empty:
-        st.warning("📋 Banco de dados vazio.")
-    else:
-        romaneios_disponiveis = sorted(df_principal["romaneio"].dropna().astype(str).unique())
-        romaneio_sel = st.selectbox("📋 Digite ou Selecione o Número do Romaneio:", romaneios_disponiveis)
-        
-        df_viagem = df_principal[df_principal["romaneio"].astype(str) == romaneio_sel]
-        
-        if not df_viagem.empty:
-            st.success(f"Romaneio selecionado com {len(df_viagem)} notas associadas.")
-            
-            nf_bipada = st.text_input("Bipagem de Saída (Número da NF):", placeholder="Insira o número da nota...")
-            if nf_bipada:
-                if nf_bipada in df_viagem["numero_nf"].astype(str).values:
-                    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    atualizar_status_db(nf_bipada, "status_ida", "EXPEDIDO", "data_carregamento_ida", agora)
-                    st.success(f"Nota Fiscal {nf_bipada} marcada como expedida com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("❌ A Nota Fiscal bipada não pertence a este romaneio.")
-                    
-            st.markdown("---")
-            st.dataframe(df_viagem, use_container_width=True)
+    with aba_operacao:
+        renderizar_aba_operacao(df)
 
-# ==============================================================================
-# MODO: BIPAGEM - RETORNO CARGA
-# ==============================================================================
-elif modo_visao == "📥 Bipagem - Retorno Carga":
-    st.title("📥 Prestação de Contas - Retorno de Carga")
-    
-    if df_principal.empty:
-        st.warning("📋 Banco de dados vazio.")
-    else:
-        romaneios_ret = sorted(df_principal["romaneio"].dropna().astype(str).unique())
-        romaneio_sel_ret = st.selectbox("📋 Selecione o Romaneio em Retorno:", romaneios_ret)
-        
-        df_viagem_ret = df_principal[df_principal["romaneio"].astype(str) == romaneio_sel_ret]
-        
-        if not df_viagem_ret.empty:
-            nf_retorno = st.text_input("Bipagem de Retorno / Canhoto (Número da NF):", placeholder="Insira a NF que retornou...")
-            if nf_retorno:
-                if nf_retorno in df_viagem_ret["numero_nf"].astype(str).values:
-                    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    atualizar_status_db(nf_retorno, "status_volta", "RETORNADO / CANHOTO OK", "data_retorno_volta", agora)
-                    st.success(f"Retorno da NF {nf_retorno} registrado com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("❌ A Nota Fiscal não pertence a este romaneio.")
-            
-            st.markdown("---")
-            st.dataframe(df_viagem_ret, use_container_width=True)
+    with aba_graficos:
+        renderizar_aba_graficos(df)
+else:
+    st.info("Base aguardando sincronização inicial de Carro Próprio e Carro Técnica do mês atual.")
 
-# ==============================================================================
-# MODO: GRÁFICO DE PENDÊNCIAS DE RETORNO (Com filtro de transportadora)
-# ==============================================================================
-elif modo_visao == "📈 Gráfico de Pendências de Retorno":
-    st.title("📈 Monitoramento de Pendências de Retorno por Transportadora")
-    
-    if df_principal.empty:
-        st.info("Sem dados cadastrados.")
-    else:
-        transportadoras = sorted(df_principal["transportadora"].dropna().unique()) if "transportadora" in df_principal.columns else []
-        transp_escolhida = st.selectbox("Selecione a Transportadora:", transportadoras)
-        
-        if transp_escolhida:
-            df_transp_view = df_principal[df_principal["transportadora"] == transp_escolhida].copy()
-            
-            # Exclui notas que possuem ressalva (ida ou volta) para evitar duplicidade de pendência
-            if "ressalva_ida" in df_transp_view.columns and "ressalva_volta" in df_transp_view.columns:
-                df_validas = df_transp_view[(df_transp_view["ressalva_ida"].isna()) & (df_transp_view["ressalva_volta"].isna())]
-            else:
-                df_validas = df_transp_view
-                
-            # Gráfico comparativo de Notas Retornadas vs Pendentes
-            if "status_volta" in df_validas.columns:
-                df_validas["status_pendencia"] = df_validas["status_volta"].apply(lambda x: "Retornado" if x == "RETORNADO / CANHOTO OK" else "Pendente")
-                df_contagem = df_validas["status_pendencia"].value_counts().reset_index()
-                df_contagem.columns = ["Status", "Quantidade"]
-                
-                fig_pend = px.bar(df_contagem, x="Status", y="Quantidade", color="Status", title=f"Status de Retorno - {transp_escolhida}", template="plotly_white")
-                st.plotly_chart(fig_pend, use_container_width=True)
-            
-            st.subheader("📋 Relação Completa de Notas da Transportadora")
-            st.dataframe(df_transp_view, use_container_width=True)
-
-# ==============================================================================
-# MODO: IMPORTAÇÃO DE ROMANEIOS (Substitui XML e elimina divergências)
-# ==============================================================================
-elif modo_visao == "⚙️ Importação de Romaneios":
-    st.title("⚙️ Importação de Dados via Planilha de Romaneios")
-    st.markdown("Faça o upload da planilha oficial de romaneios para alimentar o sistema.")
-    
-    arquivo_upload = st.file_uploader("Carregar Planilha de Romaneios (CSV ou Excel)", type=["csv", "xlsx"])
-    
-    if arquivo_upload is not None:
-        try:
-            if arquivo_upload.name.endswith('.csv'):
-                df_novo = pd.read_csv(arquivo_upload)
-            else:
-                df_novo = pd.read_excel(arquivo_upload)
-                
-            st.write("Pré-visualização dos dados carregados:")
-            st.dataframe(df_novo.head(), use_container_width=True)
-            
-            if st.button("💾 Salvar e Atualizar Base de Dados"):
-                sucesso = salvar_romaneios_db(df_novo)
-                if sucesso:
-                    st.success("Base de dados alimentada com sucesso a partir da planilha!")
-                else:
-                    st.error("Erro ao salvar dados.")
-        except Exception as e:
-            st.error(f"Erro ao processar arquivo: {e}")
+st.write("")
+with st.expander("🔒 Área Restrita — Sincronização Segura do Banco (Sem Git)", expanded=df_raw.empty):
+    senha_configurada = st.secrets.get("ADMIN_PASSWORD", "")
+    col_auth1, col_auth2 = st.columns([1.2, 2.5])
+    with col_auth1:
+        senha_digitada = st.text_input("Chave de Acesso Admin", type="password", key="admin_pwd_input")
+    with col_auth2:
+        if senha_configurada and senha_digitada == senha_configurada:
+            arq_memoria = st.file_uploader(
+                "Processar extrato de romaneios em memória (não salva arquivo no repositório)",
+                type=["xls", "xlsx", "csv", "txt"],
+                key="upload_seguro_admin",
+            )
+            if arq_memoria is not None and st.button("Sincronizar Agora", type="primary"):
+                df_novo = carregar_extrato_erp(arq_memoria)
+                novos, att = aplicar_upsert_dataframe(df_novo)
+                soma_lida = formatar_brl(df_novo["valor_nf"].sum())
+                st.success(
+                    f"Banco atualizado! {len(df_novo)} NFs processadas ({novos} novas | {att} atualizadas) · "
+                    f"Valor total lido: {soma_lida}"
+                )
+                st.rerun()
+        elif senha_digitada:
+            st.error("Chave de acesso inválida.")
+        else:
+            st.caption("Informe a chave administrativa configurada em `st.secrets` para alimentar o banco sem expor planilhas no Git.")
