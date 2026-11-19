@@ -1,0 +1,21 @@
+# Planilhas comerciais e extratos do ERP (NUNCA subir para o Git)
+*.xls
+*.xlsx
+*.csv
+SLA*
+dados_privados/
+
+# Bancos de dados locais
+*.db
+*.sqlite
+*.sqlite3
+
+# Segredos e variáveis de ambiente
+.env
+.streamlit/secrets.toml
+
+# Python / Cache
+__pycache__/
+*.py[cod]
+.venv/
+venv/
