@@ -11,19 +11,23 @@ from database import (
 )
 from flow_rules import formatar_brl
 
+
 def _to_date_or_none(val):
     if pd.isna(val) or val is None:
         return None
     return pd.to_datetime(val).date()
+
 
 def _fmt_str_date(val) -> str | None:
     if val is None or pd.isna(val):
         return None
     return pd.to_datetime(val).strftime("%Y-%m-%d")
 
+
 def _extrair_lista_nfs(texto_busca: str) -> list[str]:
     tokens = re.split(r"[\s,;]+", texto_busca.strip())
     return [t.strip() for t in tokens if t.strip().isdigit()]
+
 
 def renderizar_aba_operacao(df: pd.DataFrame):
     with st.container(border=True):

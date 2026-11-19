@@ -4,10 +4,9 @@ import streamlit as st
 from config import (
     MODALIDADES_OFICIAIS,
     CORES_FAROL,
-    AZUL_MARINHO_MASTER,
-    AZUL_CIANO_HIGIMED,
 )
 from flow_rules import formatar_brl
+
 
 def renderizar_aba_graficos(df: pd.DataFrame):
     with st.container(border=True):
@@ -43,7 +42,6 @@ def renderizar_aba_graficos(df: pd.DataFrame):
     pct_retorno = (na_mao / total_nfs * 100.0) if total_nfs > 0 else 0.0
     valor_total = float(df_g["valor_nf"].sum())
 
-    # Tempo médio em dias para a NF voltar para a mão
     concluidas_mao = df_g[df_g["dt_retorno_mao"].notna() & df_g["dt_saida"].notna()].copy()
     if not concluidas_mao.empty:
         dias_medio = (concluidas_mao["dt_retorno_mao"] - concluidas_mao["dt_saida"]).dt.days.clip(lower=0).mean()
