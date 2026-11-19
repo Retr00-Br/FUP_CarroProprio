@@ -22,12 +22,10 @@ def _fmt_str_date(val) -> str | None:
     return pd.to_datetime(val).strftime("%Y-%m-%d")
 
 def _extrair_lista_nfs(texto_busca: str) -> list[str]:
-    """Extrai múltiplos números de NF separados por vírgula, ponto e vírgula, espaço ou enter."""
     tokens = re.split(r"[\s,;]+", texto_busca.strip())
     return [t.strip() for t in tokens if t.strip().isdigit()]
 
 def renderizar_aba_operacao(df: pd.DataFrame):
-    # --- FILTROS E BUSCA INTELIGENTE POR NOTA ---
     with st.container(border=True):
         st.markdown("##### 🔎 Busca Rápida por Nota & Filtro da Frota (Mês Atual)")
         r1_c1, r1_c2, r1_c3 = st.columns([1.1, 1.2, 2.0])
@@ -88,7 +86,6 @@ def renderizar_aba_operacao(df: pd.DataFrame):
                 | df_filtrado["cliente"].str.upper().str.contains(termo, na=False)
             ]
 
-    # --- ATALHO DE CONFERÊNCIA FÍSICA EM LOTE QUANDO BUSCAR NOTAS ---
     if nfs_buscadas and not df_filtrado.empty:
         with st.container(border=True):
             st.markdown(f"**📥 Conferência Rápida — {len(df_filtrado)} NF(s) encontrada(s) na busca**")
@@ -115,7 +112,6 @@ def renderizar_aba_operacao(df: pd.DataFrame):
                     st.toast(f"{qtd} NF(s) registradas como voltadas para a mão!", icon="✅")
                     st.rerun()
 
-    # --- KPIs EXECUTIVOS (SEM SLA) ---
     total_nfs = len(df_filtrado)
     na_mao_qtd = int(df_filtrado["nf_na_mao"].sum())
     pct_retorno = (na_mao_qtd / total_nfs * 100.0) if total_nfs > 0 else 0.0
@@ -131,7 +127,6 @@ def renderizar_aba_operacao(df: pd.DataFrame):
 
     st.write("")
 
-    # --- FORMULÁRIO DE EDIÇÃO INDIVIDUAL ---
     with st.expander("✏️ Atualizar Dados da NF (Saída / Entrega / Data que Voltou para Mão / Baixa)", expanded=True):
         df_opcoes_nf = df_filtrado if not df_filtrado.empty else df
         if df_opcoes_nf.empty:
@@ -224,7 +219,6 @@ def renderizar_aba_operacao(df: pd.DataFrame):
 
     st.write("")
 
-    # --- GRADE OPERACIONAL EM LOTE ---
     st.subheader(f"Controle de Entregas & Retorno de NFs — Mês Atual ({len(df_filtrado)} NFs)")
 
     colunas_exibicao = [
