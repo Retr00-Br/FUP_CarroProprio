@@ -5,8 +5,10 @@ import pandas as pd
 from config import DB_PATH, MODALIDADES_OFICIAIS
 from parser_erp import localizar_planilha_repositorio, carregar_extrato_erp
 
+
 def get_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
+
 
 def init_db():
     with get_conn() as conn:
@@ -41,17 +43,43 @@ def init_db():
             )
         """)
 
-def aplicar_upsert_dataframe(df_erp: pd.DataFrame) -> tuple[int, int]:
+
+def aplicar_upsert_dataframe(df_erp: pd.DataFrame, sincronizar_espelho: bool = True) -> tuple[int, int]:
+    """
+    Atualiza o banco preservando preenchimentos manuais e remove NFs obsoletas do mês
+    que foram descartadas na limpeza da planilha.
+    """
     init_db()
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     novos, atualizados = 0, 0
+    prefixo_mes = date.today().strftime("%Y-%m")
 
     with get_conn() as conn:
         existentes = pd.read_sql("SELECT nf, dt_saida, valor_nf FROM entregas_fup", conn)
         map_existentes = existentes.set_index("nf").to_dict(orient="index")
 
+        nfs_validas = set(df_erp["nf"].astype(str).tolist())
+
+        # Remove registros do mês atual que não fazem mais parte da planilha limpa
+        if sincronizar_espelho and nfs_validas:
+            placeholders_mod = ",".join(["?"] * len(MODALIDADES_OFICIAIS))
+            placeholders_nf = ",".join(["?"] * len(nfs_validas))
+            conn.execute(
+                f"""
+                DELETE FROM entregas_fup
+                WHERE transportadora IN ({placeholders_mod})
+                  AND (
+                      dt_romaneio LIKE ?
+                      OR dt_saida LIKE ?
+                      OR dt_romaneio IS NULL
+                  )
+                  AND nf NOT IN ({placeholders_nf})
+                """,
+                (*MODALIDADES_OFICIAIS, f"{prefixo_mes}%", f"{prefixo_mes}%", *nfs_validas),
+            )
+
         for _, row in df_erp.iterrows():
-            nf = row["nf"]
+            nf = str(row["nf"])
             romaneio_ok = 1 if pd.notna(row["dt_romaneio"]) else 0
             dt_saida_erp = row["dt_romaneio"] if pd.notna(row["dt_romaneio"]) else None
             valor_nf = float(row["valor_nf"]) if pd.notna(row["valor_nf"]) else 0.0
@@ -90,6 +118,7 @@ def aplicar_upsert_dataframe(df_erp: pd.DataFrame) -> tuple[int, int]:
 
     return novos, atualizados
 
+
 def sincronizar_erp_backend():
     init_db()
     caminho = localizar_planilha_repositorio()
@@ -107,7 +136,7 @@ def sincronizar_erp_backend():
             return
 
     df_erp = carregar_extrato_erp(caminho)
-    aplicar_upsert_dataframe(df_erp)
+    aplicar_upsert_dataframe(df_erp, sincronizar_espelho=True)
 
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
@@ -119,6 +148,7 @@ def sincronizar_erp_backend():
                 mtime = excluded.mtime,
                 ultima_execucao = excluded.ultima_execucao
         """, (caminho, mtime_atual, agora))
+
 
 def carregar_dados() -> pd.DataFrame:
     """Retorna exclusivamente os registros de Carro Próprio e Carro Técnica do mês atual."""
@@ -142,6 +172,7 @@ def carregar_dados() -> pd.DataFrame:
     if "valor_nf" in df.columns:
         df["valor_nf"] = pd.to_numeric(df["valor_nf"], errors="coerce").fillna(0.0)
     return df
+
 
 def atualizar_registro_individual(
     nf: str,
@@ -172,8 +203,8 @@ def atualizar_registro_individual(
             nf,
         ))
 
+
 def registrar_retorno_mao_lote(nfs: list[str], data_retorno: str, baixar_erp: bool = False) -> int:
-    """Marca rapidamente a data que as NFs voltaram para a mão (conferência física)."""
     if not nfs:
         return 0
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -203,6 +234,7 @@ def registrar_retorno_mao_lote(nfs: list[str], data_retorno: str, baixar_erp: bo
                 (data_retorno, data_retorno, agora, *nfs),
             )
         return cur.rowcount
+
 
 def salvar_edicoes_lote(df_editado: pd.DataFrame):
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
