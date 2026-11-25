@@ -2,7 +2,13 @@ import os
 import glob
 import streamlit as st
 
-DB_PATH = "fuphigimed.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PASTA_DADOS_LOCAIS = os.path.join(BASE_DIR, "dados_privados")
+PASTA_BACKUPS = os.path.join(PASTA_DADOS_LOCAIS, "backups")
+os.makedirs(PASTA_DADOS_LOCAIS, exist_ok=True)
+os.makedirs(PASTA_BACKUPS, exist_ok=True)
+
+DB_PATH = os.path.join(PASTA_DADOS_LOCAIS, "fuphigimed.db")
 
 AZUL_MARINHO_MASTER = "#163274"
 AZUL_CIANO_HIGIMED = "#0089C4"
@@ -21,15 +27,58 @@ MODALIDADES_MAP = {
     "CARRO TÉCNICA": "Carro Técnica",
 }
 
+TERMOS_JUNDIAI_ORGAOS_PUBLICOS = [
+    "JUNDIAI",
+    "JUNDIAÍ",
+    "TRIBUNAL DE JUSTICA",
+    "TRIBUNAL DE JUSTIÇA",
+    "TRIBUNAL REGIONAL ELEITORAL",
+    "TJSP",
+    "TRE",
+    "PREFEITURA",
+    "SECRETARIA DE ESTADO",
+    "SECRETARIA DE GESTAO",
+    "SECRETARIA DE GESTÃO",
+    "ASSEMBLEIA LEGISLATIVA",
+    "MINISTERIO PUBLICO",
+    "MINISTÉRIO PÚBLICO",
+    "DEFENSORIA",
+    "CAMARA MUNICIPAL",
+    "CÂMARA MUNICIPAL",
+    "AUTARQUIA",
+    "FUNDACAO CASA",
+    "FUNDAÇÃO CASA",
+]
+
+MOTIVOS_NAO_RETORNO = [
+    "",
+    "Motorista não devolveu canhoto",
+    "Técnico em campo / pendente devolução",
+    "Cliente reteve via para conferência",
+    "Protocolo órgão público (TJ / TRE / Jundiaí)",
+    "Entrega reagendada / retornou ao CD",
+    "Pendência de assinatura / carimbo",
+    "Outro (detalhar na observação)",
+]
+
 CORES_FAROL = {
     "🟢 NF na Mão & Baixada": "#10b981",
     "🟡 NF na Mão (Pendente Baixa ERP)": "#f59e0b",
+    "🔴 Não Retornou (Registrado)": "#ef4444",
     "🔵 Em Rota (Aguardando Retorno)": "#0089C4",
     "🟠 Sem Romaneio (Faturada)": "#fb923c",
 }
 
+
+def detectar_jundiai_orgao_publico(nome_cliente: str) -> bool:
+    if not isinstance(nome_cliente, str) or not nome_cliente.strip():
+        return False
+    upper = nome_cliente.upper().strip()
+    return any(termo in upper for termo in TERMOS_JUNDIAI_ORGAOS_PUBLICOS)
+
+
 def buscar_imagem_corporativa(nomes_exatos: list[str], palavras_chave: list[str]) -> str | None:
-    pastas = [".", "assets"]
+    pastas = [BASE_DIR, os.path.join(BASE_DIR, "assets")]
     for pasta in pastas:
         for nome in nomes_exatos:
             caminho = os.path.join(pasta, nome)
@@ -41,6 +90,7 @@ def buscar_imagem_corporativa(nomes_exatos: list[str], palavras_chave: list[str]
                 if encontrados:
                     return encontrados[0]
     return None
+
 
 def aplicar_estilo_higimed():
     st.markdown(
@@ -98,7 +148,7 @@ def aplicar_estilo_higimed():
                 border: 1px solid #DCE9F7;
                 border-top: 4px solid {AZUL_CIANO_HIGIMED};
                 border-radius: 14px;
-                padding: 14px 18px;
+                padding: 14px 16px;
                 box-shadow: 0 4px 14px rgba(22, 50, 116, 0.05);
                 transition: transform 0.15s ease;
             }}
@@ -106,12 +156,12 @@ def aplicar_estilo_higimed():
                 transform: translateY(-2px);
             }}
             [data-testid="stMetricLabel"] {{
-                font-size: 0.82rem;
+                font-size: 0.8rem;
                 color: #334155;
                 font-weight: 700;
             }}
             [data-testid="stMetricValue"] {{
-                font-size: clamp(1.2rem, 1.55vw, 1.7rem) !important;
+                font-size: clamp(1.1rem, 1.35vw, 1.55rem) !important;
                 color: {AZUL_MARINHO_MASTER};
                 font-weight: 800;
                 white-space: nowrap !important;

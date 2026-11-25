@@ -1,5 +1,7 @@
+import os
+from datetime import date
 import streamlit as st
-from config import aplicar_estilo_higimed, buscar_imagem_corporativa
+from config import DB_PATH, aplicar_estilo_higimed, buscar_imagem_corporativa
 from parser_erp import carregar_extrato_erp
 from database import sincronizar_erp_backend, carregar_dados, aplicar_upsert_dataframe
 from flow_rules import enriquecer_fluxo_frota, formatar_brl
@@ -34,8 +36,8 @@ with st.container():
             """
             <div style="padding-left: 10px;">
                 <p class="titulo-sistema">FUPHigimed — Controle de Frota Própria &amp; Técnica</p>
-                <p class="subtitulo-sistema">Distribuindo Saúde e Bem Estar · Saídas, Retorno de NF em Mão &amp; Baixa ERP</p>
-                <span class="badge-transportadoras">Carro Próprio · Carro Técnica</span>
+                <p class="subtitulo-sistema">Distribuindo Saúde e Bem Estar · Saídas, Retorno de NF em Mão &amp; Órgãos Públicos</p>
+                <span class="badge-transportadoras">Carro Próprio · Carro Técnica · Jundiaí / TJ / TRE</span>
             </div>
             """,
             unsafe_allow_html=True,
@@ -46,7 +48,7 @@ with st.container():
             st.image(caminhao_path, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-df_raw = carregar_dados()
+df_raw = carregar_dados(apenas_mes_atual=False)
 
 if not df_raw.empty:
     df = enriquecer_fluxo_frota(df_raw)
@@ -58,10 +60,10 @@ if not df_raw.empty:
     with aba_graficos:
         renderizar_aba_graficos(df)
 else:
-    st.info("Base aguardando sincronização inicial de Carro Próprio e Carro Técnica do mês atual.")
+    st.info("Base aguardando sincronização inicial de Carro Próprio e Carro Técnica.")
 
 st.write("")
-with st.expander("🔒 Área Restrita — Sincronização Segura do Banco (Sem Git)", expanded=df_raw.empty):
+with st.expander("🔒 Área Restrita — Sincronização & Backup do Banco SQLite", expanded=df_raw.empty):
     senha_configurada = st.secrets.get("ADMIN_PASSWORD", "")
     col_auth1, col_auth2 = st.columns([1.2, 2.5])
     with col_auth1:
@@ -69,20 +71,32 @@ with st.expander("🔒 Área Restrita — Sincronização Segura do Banco (Sem G
     with col_auth2:
         if senha_configurada and senha_digitada == senha_configurada:
             arq_memoria = st.file_uploader(
-                "Processar extrato de romaneios em memória (não salva arquivo no repositório)",
+                "Processar extrato de romaneios em memória (acumula no banco sem apagar histórico)",
                 type=["xls", "xlsx", "csv", "txt"],
                 key="upload_seguro_admin",
             )
-            if arq_memoria is not None and st.button("Sincronizar Agora", type="primary"):
-                df_novo = carregar_extrato_erp(arq_memoria)
-                novos, att = aplicar_upsert_dataframe(df_novo)
-                soma_lida = formatar_brl(df_novo["valor_nf"].sum())
-                st.success(
-                    f"Banco atualizado! {len(df_novo)} NFs processadas ({novos} novas | {att} atualizadas) · "
-                    f"Valor total lido: {soma_lida}"
-                )
-                st.rerun()
+            b_sync, b_bkp = st.columns(2)
+            with b_sync:
+                if arq_memoria is not None and st.button("Sincronizar Agora", type="primary", use_container_width=True):
+                    df_novo = carregar_extrato_erp(arq_memoria)
+                    novos, att = aplicar_upsert_dataframe(df_novo)
+                    soma_lida = formatar_brl(df_novo["valor_nf"].sum())
+                    st.success(
+                        f"Banco atualizado! {len(df_novo)} NFs ({novos} novas | {att} atualizadas) · "
+                        f"Total lido: {soma_lida}"
+                    )
+                    st.rerun()
+            with b_bkp:
+                if os.path.exists(DB_PATH):
+                    with open(DB_PATH, "rb") as f_db:
+                        st.download_button(
+                            label="💾 Baixar Backup (.db)",
+                            data=f_db.read(),
+                            file_name=f"fuphigimed_backup_{date.today().strftime('%Y%m%d')}.db",
+                            mime="application/octet-stream",
+                            use_container_width=True,
+                        )
         elif senha_digitada:
             st.error("Chave de acesso inválida.")
         else:
-            st.caption("Informe a chave administrativa configurada em `st.secrets` para alimentar o banco sem expor planilhas no Git.")
+            st.caption(f"Banco permanente ativo em: `{DB_PATH}`")

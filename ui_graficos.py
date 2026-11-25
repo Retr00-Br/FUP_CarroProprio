@@ -20,13 +20,13 @@ def renderizar_aba_graficos(df: pd.DataFrame):
             key="pills_graf_mod",
         )
 
-        opcoes_status = sorted(df["status_fluxo"].unique().tolist())
+        opcoes_status = list(CORES_FAROL.keys())
         status_selecionado = st.pills(
             "Status das NFs",
             options=opcoes_status,
             default=opcoes_status,
             selection_mode="multi",
-            key="pills_graf_status",
+            key="pills_graf_status_v3",
         )
 
     df_g = df.copy()
@@ -39,6 +39,7 @@ def renderizar_aba_graficos(df: pd.DataFrame):
 
     total_nfs = len(df_g)
     na_mao = int(df_g["nf_na_mao"].sum())
+    nao_ret = int(df_g["flag_nao_retornou"].sum())
     pct_retorno = (na_mao / total_nfs * 100.0) if total_nfs > 0 else 0.0
     valor_total = float(df_g["valor_nf"].sum())
 
@@ -53,7 +54,7 @@ def renderizar_aba_graficos(df: pd.DataFrame):
     k1.metric("Taxa de Retorno na Mão", f"{pct_retorno:.1f}%")
     k2.metric("Tempo Médio Retorno NF", tempo_medio_fmt)
     k3.metric("Valor Embarcado (R$ NF)", formatar_brl(valor_total))
-    k4.metric("NFs Aguardando Retorno", int((~df_g["nf_na_mao"]).sum()))
+    k4.metric("🔴 NFs Não Retornadas", nao_ret)
 
     st.write("")
 
@@ -102,12 +103,14 @@ def renderizar_aba_graficos(df: pd.DataFrame):
     for mod, grp in df_g.groupby("transportadora"):
         tot = len(grp)
         mao = int(grp["nf_na_mao"].sum())
+        n_ret = int(grp["flag_nao_retornou"].sum())
         linhas.append({
             "Modalidade": mod,
             "Total NFs": tot,
             "Valor Total (R$)": formatar_brl(float(grp["valor_nf"].sum())),
             "NFs na Mão": mao,
-            "Aguardando Retorno": tot - mao,
+            "Não Retornou (Reg.)": n_ret,
+            "Em Rota": int((grp["status_fluxo"] == "🔵 Em Rota (Aguardando Retorno)").sum()),
             "Pendente Baixa ERP": int((grp["status_fluxo"] == "🟡 NF na Mão (Pendente Baixa ERP)").sum()),
             "Taxa de Retorno (%)": f"{(mao / tot * 100.0):.1f}%" if tot > 0 else "0.0%",
         })
