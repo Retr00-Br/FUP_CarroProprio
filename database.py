@@ -8,6 +8,7 @@ from config import (
     BASE_DIR,
     DB_PATH,
     PASTA_BACKUPS,
+    PASTA_BACKUP_EXTERNO,
     MODALIDADES_OFICIAIS,
     detectar_jundiai_orgao_publico,
 )
@@ -32,8 +33,14 @@ def criar_backup_automatico() -> str | None:
     destino = os.path.join(PASTA_BACKUPS, f"fuphigimed_{hoje_str}.db")
     shutil.copy2(DB_PATH, destino)
 
+    try:
+        os.makedirs(PASTA_BACKUP_EXTERNO, exist_ok=True)
+        shutil.copy2(DB_PATH, os.path.join(PASTA_BACKUP_EXTERNO, "fuphigimed_ultimo.db"))
+    except OSError:
+        pass
+
     backups = sorted(glob.glob(os.path.join(PASTA_BACKUPS, "fuphigimed_*.db")))
-    for antigo in backups[:-15]:
+    for antigo in backups[:-30]:
         try:
             os.remove(antigo)
         except OSError:
@@ -78,14 +85,16 @@ def init_db():
             conn.execute("ALTER TABLE entregas_fup ADD COLUMN motivo_nao_retorno TEXT DEFAULT ''")
         if "nota_jundiai_orgao" not in colunas:
             conn.execute("ALTER TABLE entregas_fup ADD COLUMN nota_jundiai_orgao INTEGER DEFAULT 0")
-            # Classifica registros já existentes no banco
             rows = conn.execute("SELECT nf, cliente FROM entregas_fup").fetchall()
             for nf_id, cli in rows:
                 if detectar_jundiai_orgao_publico(cli):
-                    conn.execute(
-                        "UPDATE entregas_fup SET nota_jundiai_orgao = 1 WHERE nf = ?",
-                        (nf_id,),
-                    )
+                    conn.execute("UPDATE entregas_fup SET nota_jundiai_orgao = 1 WHERE nf = ?", (nf_id,))
+
+        # Índices para performance instantânea com grandes volumes de planilhas
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fup_transp ON entregas_fup(transportadora);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fup_romaneio ON entregas_fup(dt_romaneio);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fup_orgao ON entregas_fup(nota_jundiai_orgao);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fup_nao_ret ON entregas_fup(nao_retornou);")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS controle_ingestao (
@@ -98,10 +107,11 @@ def init_db():
 
 
 def aplicar_upsert_dataframe(df_erp: pd.DataFrame) -> tuple[int, int]:
-    """Insere novas NFs e atualiza existentes preservando todo o histórico permanente."""
+    """Insere em lote todas as novas NFs da planilha e atualiza existentes sem apagar histórico."""
     init_db()
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    novos, atualizados = 0, 0
+    novos_registros = []
+    atualizacoes = []
 
     with get_conn() as conn:
         existentes = pd.read_sql("SELECT nf, dt_saida, valor_nf FROM entregas_fup", conn)
@@ -115,42 +125,46 @@ def aplicar_upsert_dataframe(df_erp: pd.DataFrame) -> tuple[int, int]:
             is_orgao = 1 if detectar_jundiai_orgao_publico(row["cliente"]) else 0
 
             if nf not in map_existentes:
-                conn.execute("""
-                    INSERT INTO entregas_fup (
-                        nf, cliente, transportadora, valor_nf, dt_saida,
-                        dt_entrega_real, dt_retorno_mao, dt_romaneio,
-                        romaneio_preenchido, nf_baixada_sistema,
-                        nao_retornou, motivo_nao_retorno,
-                        nota_jundiai_orgao, atualizado_em
-                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, 0, '', ?, ?)
-                """, (
+                novos_registros.append((
                     nf, row["cliente"], row["transportadora"], valor_nf, dt_saida_erp,
                     row["dt_romaneio"], romaneio_ok, is_orgao, agora
                 ))
-                novos += 1
             else:
                 antigo = map_existentes[nf]
                 dt_saida_final = antigo["dt_saida"] or dt_saida_erp
                 valor_final = valor_nf if valor_nf > 0 else float(antigo.get("valor_nf") or 0.0)
-                conn.execute("""
-                    UPDATE entregas_fup
-                    SET cliente = ?,
-                        transportadora = ?,
-                        valor_nf = ?,
-                        dt_saida = ?,
-                        dt_romaneio = COALESCE(?, dt_romaneio),
-                        romaneio_preenchido = CASE WHEN ? = 1 THEN 1 ELSE romaneio_preenchido END,
-                        nota_jundiai_orgao = CASE WHEN ? = 1 THEN 1 ELSE nota_jundiai_orgao END,
-                        atualizado_em = ?
-                    WHERE nf = ?
-                """, (
+                atualizacoes.append((
                     row["cliente"], row["transportadora"], valor_final,
                     dt_saida_final, row["dt_romaneio"], romaneio_ok, is_orgao, agora, nf
                 ))
-                atualizados += 1
+
+        if novos_registros:
+            conn.executemany("""
+                INSERT INTO entregas_fup (
+                    nf, cliente, transportadora, valor_nf, dt_saida,
+                    dt_entrega_real, dt_retorno_mao, dt_romaneio,
+                    romaneio_preenchido, nf_baixada_sistema,
+                    nao_retornou, motivo_nao_retorno,
+                    nota_jundiai_orgao, atualizado_em
+                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, 0, '', ?, ?)
+            """, novos_registros)
+
+        if atualizacoes:
+            conn.executemany("""
+                UPDATE entregas_fup
+                SET cliente = ?,
+                    transportadora = ?,
+                    valor_nf = ?,
+                    dt_saida = ?,
+                    dt_romaneio = COALESCE(?, dt_romaneio),
+                    romaneio_preenchido = CASE WHEN ? = 1 THEN 1 ELSE romaneio_preenchido END,
+                    nota_jundiai_orgao = CASE WHEN ? = 1 THEN 1 ELSE nota_jundiai_orgao END,
+                    atualizado_em = ?
+                WHERE nf = ?
+            """, atualizacoes)
 
     criar_backup_automatico()
-    return novos, atualizados
+    return len(novos_registros), len(atualizacoes)
 
 
 def sincronizar_erp_backend():
@@ -185,7 +199,6 @@ def sincronizar_erp_backend():
 
 
 def carregar_dados(apenas_mes_atual: bool = False) -> pd.DataFrame:
-    """Carrega os registros salvos permanentemente no banco local."""
     init_db()
     placeholders = ",".join(["?"] * len(MODALIDADES_OFICIAIS))
     with get_conn() as conn:
@@ -331,7 +344,6 @@ def registrar_nao_retornou_lote(nfs: list[str], motivo: str = "") -> int:
 
 
 def marcar_jundiai_orgao_lote(nfs: list[str], marcar: bool = True) -> int:
-    """Tica ou destica em lote notas de Jundiaí / Órgãos Públicos (TJ, TRE, etc.)."""
     if not nfs:
         return 0
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -353,36 +365,39 @@ def marcar_jundiai_orgao_lote(nfs: list[str], marcar: bool = True) -> int:
 
 def salvar_edicoes_lote(df_editado: pd.DataFrame):
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with get_conn() as conn:
-        for _, row in df_editado.iterrows():
-            dt_ret = row["dt_retorno_mao"]
-            baixada = bool(row["nf_baixada_sistema"])
-            nao_ret = False if (dt_ret or baixada) else bool(row.get("nao_retornou", False))
-            motivo = "" if not nao_ret else str(row.get("motivo_nao_retorno") or "").strip()
-            is_orgao = bool(row.get("nota_jundiai_orgao", False))
+    lote_updates = []
+    for _, row in df_editado.iterrows():
+        dt_ret = row["dt_retorno_mao"]
+        baixada = bool(row["nf_baixada_sistema"])
+        nao_ret = False if (dt_ret or baixada) else bool(row.get("nao_retornou", False))
+        motivo = "" if not nao_ret else str(row.get("motivo_nao_retorno") or "").strip()
+        is_orgao = bool(row.get("nota_jundiai_orgao", False))
 
-            conn.execute("""
-                UPDATE entregas_fup
-                SET dt_saida = ?,
-                    dt_entrega_real = ?,
-                    dt_retorno_mao = ?,
-                    nf_baixada_sistema = ?,
-                    nao_retornou = ?,
-                    motivo_nao_retorno = ?,
-                    nota_jundiai_orgao = ?,
-                    observacao = ?,
-                    atualizado_em = ?
-                WHERE nf = ?
-            """, (
-                row["dt_saida"],
-                row["dt_entrega_real"],
-                dt_ret,
-                int(baixada),
-                int(nao_ret),
-                motivo,
-                int(is_orgao),
-                row["observacao"],
-                agora,
-                row["nf"],
-            ))
+        lote_updates.append((
+            row["dt_saida"],
+            row["dt_entrega_real"],
+            dt_ret,
+            int(baixada),
+            int(nao_ret),
+            motivo,
+            int(is_orgao),
+            row["observacao"],
+            agora,
+            str(row["nf"]),
+        ))
+
+    with get_conn() as conn:
+        conn.executemany("""
+            UPDATE entregas_fup
+            SET dt_saida = ?,
+                dt_entrega_real = ?,
+                dt_retorno_mao = ?,
+                nf_baixada_sistema = ?,
+                nao_retornou = ?,
+                motivo_nao_retorno = ?,
+                nota_jundiai_orgao = ?,
+                observacao = ?,
+                atualizado_em = ?
+            WHERE nf = ?
+        """, lote_updates)
     criar_backup_automatico()

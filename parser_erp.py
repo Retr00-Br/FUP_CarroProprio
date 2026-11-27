@@ -2,9 +2,9 @@ import io
 import os
 import re
 import glob
-from datetime import date
 import pandas as pd
-from config import MODALIDADES_MAP
+from config import BASE_DIR, PASTA_DADOS_LOCAIS, MODALIDADES_MAP
+
 
 def normalizar_modalidade(nome) -> str | None:
     if not isinstance(nome, str) or not nome.strip():
@@ -14,6 +14,7 @@ def normalizar_modalidade(nome) -> str | None:
         if chave in upper:
             return padrao
     return None
+
 
 def corrigir_texto(val) -> str:
     if pd.isna(val) or val is None:
@@ -25,6 +26,7 @@ def corrigir_texto(val) -> str:
         except Exception:
             pass
     return texto
+
 
 def _converter_celula_valor(val) -> float:
     if pd.isna(val) or val is None:
@@ -48,8 +50,10 @@ def _converter_celula_valor(val) -> float:
     except ValueError:
         return 0.0
 
+
 def parse_valor_br(serie: pd.Series) -> pd.Series:
     return serie.apply(_converter_celula_valor).astype(float)
+
 
 def _encontrar_coluna_valor(df: pd.DataFrame) -> str | None:
     for col in df.columns:
@@ -64,9 +68,10 @@ def _encontrar_coluna_valor(df: pd.DataFrame) -> str | None:
         return df.columns[4]
     return None
 
+
 def localizar_planilha_repositorio() -> str | None:
     candidatos = []
-    for pasta in ["dados_privados", "."]:
+    for pasta in [PASTA_DADOS_LOCAIS, BASE_DIR]:
         if os.path.isdir(pasta):
             candidatos.extend(glob.glob(os.path.join(pasta, "SLA*.xls*")))
             candidatos.extend(glob.glob(os.path.join(pasta, "ROMANEIO*.xls*")))
@@ -75,8 +80,9 @@ def localizar_planilha_repositorio() -> str | None:
     candidatos.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidatos[0]
 
+
 def carregar_extrato_erp(fonte) -> pd.DataFrame:
-    """Lê extrato de romaneios e filtra exclusivamente Carro Próprio e Carro Técnica."""
+    """Lê todo o extrato de romaneios de Carro Próprio e Carro Técnica sem limite de linhas."""
     if hasattr(fonte, "getvalue"):
         raw_bytes = fonte.getvalue()
     elif isinstance(fonte, (str, os.PathLike)):
@@ -135,13 +141,6 @@ def carregar_extrato_erp(fonte) -> pd.DataFrame:
     else:
         df["dt_rom_dt"] = pd.NaT
 
-    # Filtra mês atual (romaneadas no mês ou faturadas no mês ainda sem romaneio)
-    hoje = date.today()
-    mes_atual_mask = (df["dt_rom_dt"].dt.year == hoje.year) & (df["dt_rom_dt"].dt.month == hoje.month)
-    sem_rom_mes_atual = df["dt_rom_dt"].isna() & (df["valor_nf"] > 0)
-    df = df[mes_atual_mask | sem_rom_mes_atual].copy()
-
-    # Agrupa por NF única consolidando valor e preservando a primeira data de romaneio válida
     df_agrupado = (
         df.groupby("NF_LIMPA", as_index=False)
         .agg({

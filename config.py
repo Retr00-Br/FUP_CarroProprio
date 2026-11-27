@@ -5,8 +5,14 @@ import streamlit as st
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PASTA_DADOS_LOCAIS = os.path.join(BASE_DIR, "dados_privados")
 PASTA_BACKUPS = os.path.join(PASTA_DADOS_LOCAIS, "backups")
+PASTA_BACKUP_EXTERNO = os.path.join(os.path.expanduser("~"), "Documents", "Backup_FUPHigimed")
+
 os.makedirs(PASTA_DADOS_LOCAIS, exist_ok=True)
 os.makedirs(PASTA_BACKUPS, exist_ok=True)
+try:
+    os.makedirs(PASTA_BACKUP_EXTERNO, exist_ok=True)
+except OSError:
+    pass
 
 DB_PATH = os.path.join(PASTA_DADOS_LOCAIS, "fuphigimed.db")
 
@@ -150,10 +156,6 @@ def aplicar_estilo_higimed():
                 border-radius: 14px;
                 padding: 14px 16px;
                 box-shadow: 0 4px 14px rgba(22, 50, 116, 0.05);
-                transition: transform 0.15s ease;
-            }}
-            [data-testid="stMetric"]:hover {{
-                transform: translateY(-2px);
             }}
             [data-testid="stMetricLabel"] {{
                 font-size: 0.8rem;
@@ -165,8 +167,6 @@ def aplicar_estilo_higimed():
                 color: {AZUL_MARINHO_MASTER};
                 font-weight: 800;
                 white-space: nowrap !important;
-                overflow: visible !important;
-                text-overflow: unset !important;
             }}
             .stTabs [data-baseweb="tab-list"] {{
                 gap: 10px;
@@ -186,7 +186,6 @@ def aplicar_estilo_higimed():
             .stTabs [aria-selected="true"] {{
                 background: linear-gradient(90deg, {AZUL_MARINHO_MASTER} 0%, {AZUL_CIANO_HIGIMED} 100%) !important;
                 color: #FFFFFF !important;
-                box-shadow: 0 4px 10px rgba(22, 50, 116, 0.2);
             }}
             div.stButton > button[kind="primary"], div.stFormSubmitButton > button[kind="primary"] {{
                 background: linear-gradient(90deg, {AZUL_MARINHO_MASTER} 0%, {AZUL_CIANO_HIGIMED} 100%);
@@ -194,10 +193,6 @@ def aplicar_estilo_higimed():
                 color: #FFFFFF;
                 font-weight: 700;
                 border-radius: 10px;
-                box-shadow: 0 3px 10px rgba(0, 137, 196, 0.25);
-            }}
-            div.stButton > button[kind="primary"]:hover, div.stFormSubmitButton > button[kind="primary"]:hover {{
-                opacity: 0.92;
             }}
         </style>
         """,
